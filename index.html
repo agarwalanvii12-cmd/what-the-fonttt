@@ -3,21 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>What The Font?</title>
+  <title>What The Font?!</title>
 
-  <!-- Variable fonts (each one has adjustable axes for the result sliders) -->
+  <!-- Variable fonts from Google Fonts. Each one has adjustable axes (wght, wdth, slnt...). Caveat = scrapbook handwriting. -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400..700&family=Fraunces:opsz,wght@9..144,100..900&family=Inter:wght@100..900&family=JetBrains+Mono:wght@100..800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@400..700&family=Fraunces:opsz,wght,SOFT,WONK@9..144,100..900,0..100,0..1&family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1&family=Roboto+Flex:opsz,slnt,wdth,wght@8..144,-10..0,25..151,100..1000&family=Roboto+Slab:wght@100..900&family=Dancing+Script:wght@400..700&family=Inter:wght@400..800&display=swap">
 
   <link rel="stylesheet" href="style.css">
 
-  <!-- p5.js -->
-  <script src="https://cdn.jsdelivr.net/npm/p5@1.11.1/lib/p5.min.js"></script>
+  <!-- p5.js (the same library as editor.p5js.org, just loaded here) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.1/p5.min.js"></script>
 
-  <!-- Order matters: data first, then API helper, then the sketch -->
-  <script src="quizData.js"></script>
-  <script src="api.js"></script>
+  <!-- Our code, in the order it is needed -->
+  <script src="quiz-data.js"></script>
+  <script src="fonts.js"></script>
+  <script src="foundry.js"></script>
   <script src="sketch.js"></script>
 </head>
 <body>

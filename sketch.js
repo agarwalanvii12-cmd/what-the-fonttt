@@ -1,356 +1,449 @@
 // ============================================================
-// sketch.js : What The Font v2
-// State machine: intro -> key (if needed) -> quiz -> loading -> result
+// WHAT THE FONT?!  v2 · scrapbook edition
+// Which font does your personality scream?
+// ID2116 Computing for Design · Project 02
+//
+// States: "landing" → "quiz" → "loading" → "result"
+// View   = p5 DOM elements (createDiv, createButton, createSlider)
+// Model  = QUESTIONS + specs (quiz-data.js)
+// AI     = The Foundry (foundry.js)
 // ============================================================
 
-let state = "intro";
-let afterKeyState = "quiz"; // where to go after the key screen
-let qIndex = 0;
-let answers = [];
-let result = null;          // { fontKey, totals, reading }
-let requestInFlight = false;
-let ui;
-let floaters = [];
+let state = "landing";
+let app;                  // the <main> element everything goes into
+let userName = "";
+let userAnswers = [];     // index of the option picked for each question
+let current = 0;          // which question we're on
+let specs = { ...DEFAULT_SPECS };
+let quizSpecs = null;     // the specs the quiz produced (for "reset")
+let foundry = null;       // The Foundry's reply
+let confetti = [];        // letters that rain down while The Foundry thinks
 
-const FLOAT_CHARS = "AaGgQqRr&?!@%WTF";
-const PALETTE = ["#e4572e", "#2e86ab", "#f3a712", "#6a4c93", "#29335c"];
-
+const TILTS = [-1.4, 1.1, -0.7, 1.6, -1.1, 0.8];
 
 // ---------- p5 ----------
 function setup() {
-  const cnv = createCanvas(windowWidth, windowHeight);
-  cnv.style("position", "fixed");
-  cnv.style("top", "0");
-  cnv.style("left", "0");
-  cnv.style("z-index", "-1");
-
-  ui = select("#app");
-  for (let i = 0; i < 22; i++) floaters.push(makeFloater(true));
-  render();
+  const c = createCanvas(windowWidth, windowHeight);
+  c.parent(document.body); // p5 puts the canvas inside <main> by default, which app.html("") would wipe
+  c.position(0, 0);
+  c.style("position", "fixed");
+  c.style("z-index", "-1");
+  app = select("#app");
+  showLanding();
 }
 
+// graph-paper background; letters rain while The Foundry thinks
 function draw() {
-  background(247, 240, 226);
-  noStroke();
-  textAlign(CENTER, CENTER);
+  background(246, 238, 220);
 
-  for (const f of floaters) {
-    f.y -= f.speed;
-    f.rot += f.spin;
-    if (f.y < -100) Object.assign(f, makeFloater(false));
+  // graph paper grid
+  stroke(90, 130, 190, 34);
+  strokeWeight(1);
+  const g = 24;
+  for (let x = 0; x < width; x += g) line(x, 0, x, height);
+  for (let y = 0; y < height; y += g) line(0, y, width, y);
 
-    push();
-    translate(f.x, f.y);
-    rotate(f.rot);
-    fill(f.col);
-    textFont(f.font);
-    textSize(f.size);
-    text(f.ch, 0, 0);
-    pop();
+  // red notebook margin
+  if (width > 760) {
+    stroke(232, 51, 31, 80);
+    strokeWeight(2);
+    line(52, 0, 52, height);
   }
+  noStroke();
+
+  if (state === "loading") drawConfetti();
+  else noLoop();
 }
 
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
+  redraw();
 }
 
-function makeFloater(anywhere) {
-  const c = color(random(PALETTE));
-  c.setAlpha(45);
-  const keys = Object.keys(FONTS);
-  return {
-    x: random(width),
-    y: anywhere ? random(height) : height + random(40, 200),
-    ch: random(FLOAT_CHARS.split("")),
-    font: FONTS[random(keys)].family,
-    size: random(28, 96),
-    speed: random(0.15, 0.6),
-    rot: random(TWO_PI),
-    spin: random(-0.004, 0.004),
-    col: c
-  };
+function setState(s) {
+  state = s;
+  app.html("");
+  if (s === "loading") { makeConfetti(); loop(); } else redraw();
+  window.scrollTo(0, 0);
 }
 
-
-// ---------- Screen router ----------
-function render() {
-  ui.html("");
-  if (state === "intro") renderIntro();
-  else if (state === "key") renderKey();
-  else if (state === "quiz") renderQuestion();
-  else if (state === "loading") renderLoading();
-  else if (state === "result") renderResult();
-}
-
-function makeCard(extraClass) {
-  const c = createDiv().parent(ui).addClass("card");
-  if (extraClass) c.addClass(extraClass);
-  return c;
-}
-
-
-// ---------- Intro ----------
-function renderIntro() {
-  const c = makeCard("intro");
-  createElement("h1", "What The Font?").parent(c);
-  createP("Answer five quick questions and find out which typeface you secretly are.").parent(c);
-
-  createButton("Start the quiz").parent(c).addClass("primary").mousePressed(() => {
-    resetQuiz();
-    afterKeyState = "quiz";
-    state = getApiKey() ? "quiz" : "key";
-    render();
-  });
-
-  const hasKey = !!getApiKey();
-  createP(hasKey ? "AI reading: on" : "AI reading: no key set").parent(c).addClass("small");
-  createButton(hasKey ? "Change API key" : "Add API key").parent(c).addClass("link").mousePressed(() => {
-    afterKeyState = "intro";
-    state = "key";
-    render();
-  });
-}
-
-
-// ---------- Key screen ----------
-function renderKey() {
-  const c = makeCard();
-  createElement("h2", "Paste the class API key").parent(c);
-  createP("It stays in this browser only. It is never saved in the code or the repo.").parent(c).addClass("small");
-
-  const input = createInput("", "password").parent(c).addClass("key-input");
-  input.attribute("placeholder", "sk-proj-...");
-  input.attribute("autocomplete", "off");
-
-  const msg = createP("").parent(c).addClass("error");
-  const row = createDiv().parent(c).addClass("row");
-
-  createButton("Save key").parent(row).addClass("primary").mousePressed(() => {
-    const val = input.value().trim();
-    if (!val.startsWith("sk-")) {
-      msg.html("That doesn't look like an OpenAI key. It should start with sk-");
-      return;
-    }
-    saveApiKey(val);
-    state = afterKeyState;
-    render();
-  });
-
-  createButton("Skip (offline readings)").parent(row).mousePressed(() => {
-    state = afterKeyState;
-    render();
-  });
-
-  if (getApiKey()) {
-    createButton("Remove saved key").parent(c).addClass("link").mousePressed(() => {
-      clearApiKey();
-      state = "intro";
-      render();
+// ---------- loading confetti: letters in every family ----------
+function makeConfetti() {
+  confetti = [];
+  const fams = ["Fraunces", "Recursive", "Roboto Flex", "Roboto Slab", "Dancing Script", "Caveat"];
+  const cols = ["#1d1a16", "#E8331F", "#2E6FD8", "#E0A100"];
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ?!&@*".split("");
+  for (let i = 0; i < 42; i++) {
+    const c = color(random(cols));
+    c.setAlpha(150);
+    confetti.push({
+      x: random(width), y: random(-height, 0),
+      ch: random(chars), f: random(fams),
+      s: random(22, 76), v: random(1, 3.2),
+      r: random(TWO_PI), vr: random(-0.03, 0.03),
+      c,
     });
   }
 }
 
-
-// ---------- Quiz ----------
-function renderQuestion() {
-  const q = QUESTIONS[qIndex];
-  const c = makeCard("question");
-
-  createP(`Question ${qIndex + 1} of ${QUESTIONS.length}`).parent(c).addClass("small");
-  createElement("h2", q.text).parent(c);
-
-  if (q.type === "choice") {
-    const list = createDiv().parent(c).addClass("options");
-    q.options.forEach((opt, i) => {
-      const b = createButton(opt.label).parent(list).addClass("option");
-      if (answers[qIndex] && answers[qIndex].value === i) b.addClass("selected");
-      b.mousePressed(() => {
-        answers[qIndex] = { value: i };
-        goNext();
-      });
-    });
-  } else if (q.type === "slider") {
-    const startVal = answers[qIndex] ? answers[qIndex].value : q.start;
-    const s = createSlider(q.min, q.max, startVal, 1).parent(c).addClass("slider");
-    const labels = createDiv().parent(c).addClass("slider-labels");
-    createSpan(q.minLabel).parent(labels);
-    createSpan(q.maxLabel).parent(labels);
-
-    createButton("Next").parent(c).addClass("primary").mousePressed(() => {
-      answers[qIndex] = { value: Number(s.value()) };
-      goNext();
-    });
+function drawConfetti() {
+  textAlign(CENTER, CENTER);
+  for (const p of confetti) {
+    p.y += p.v;
+    p.r += p.vr;
+    if (p.y > height + 60) { p.y = -60; p.x = random(width); }
+    push();
+    translate(p.x, p.y);
+    rotate(p.r);
+    fill(p.c);
+    textFont(p.f);
+    textSize(p.s);
+    text(p.ch, 0, 0);
+    pop();
   }
+}
 
-  const nav = createDiv().parent(c).addClass("row");
-  if (qIndex > 0) {
-    createButton("Back").parent(nav).addClass("link").mousePressed(() => {
-      qIndex--;
-      render();
-    });
+// ---------- helpers ----------
+function el(tag, cls, html, parent) {
+  const e = createElement(tag, html || "");
+  if (cls) e.addClass(cls);
+  e.parent(parent || app);
+  return e;
+}
+
+// a strip of washi tape stuck on a card
+function tape(parent, where, colour) {
+  return el("span", `tape ${where} ${colour || ""}`, "", parent);
+}
+
+// a handwritten note in the margins
+function doodle(text, parent, cls) {
+  return el("div", "doodle " + (cls || ""), text, parent);
+}
+
+// AI text goes in as HTML, so escape it first
+function esc(s) {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// each letter in a different font, like a ransom note
+const RANSOM = [
+  { s: { classification: "sans",   weight: 1000, width: 140, slant: 0,   casual: 0, roundness: 0,   contrast: 0,   spacing: 0 }, bg: "ink" },
+  { s: { classification: "script", weight: 700,  width: 100, slant: 0,   casual: 0, roundness: 0,   contrast: 0,   spacing: 0 }, bg: "paper" },
+  { s: { classification: "serif",  weight: 900,  width: 100, slant: 0,   casual: 1, roundness: 100, contrast: 100, spacing: 0 }, bg: "red" },
+  { s: { classification: "mono",   weight: 300,  width: 100, slant: -15, casual: 1, roundness: 0,   contrast: 0,   spacing: 0 }, bg: "dots" },
+  { s: { classification: "slab",   weight: 900,  width: 100, slant: 0,   casual: 0, roundness: 0,   contrast: 0,   spacing: 0 }, bg: "yellow" },
+  { s: { classification: "serif",  weight: 200,  width: 100, slant: 0,   casual: 0, roundness: 0,   contrast: 100, spacing: 0 }, bg: "ink" },
+  { s: { classification: "sans",   weight: 300,  width: 60,  slant: -15, casual: 0, roundness: 0,   contrast: 0,   spacing: 0 }, bg: "blue" },
+];
+
+function ransom(text, parent) {
+  const wrap = el("div", "ransom", "", parent);
+  let i = 0;
+  let word = el("span", "word", "", wrap); // letters of one word never split across lines
+  for (const ch of text) {
+    if (ch === " ") { el("span", "gap", "", wrap); word = el("span", "word", "", wrap); continue; }
+    const r = RANSOM[i % RANSOM.length];
+    const t = el("span", "tile " + r.bg, ch, word);
+    applyFont(t, r.s);
+    t.style("transform", `rotate(${[-5, 3, -2, 4, -3, 2, -4][i % 7]}deg)`);
+    i++;
   }
-  createButton("Restart").parent(nav).addClass("link").mousePressed(() => {
-    state = "intro";
-    render();
+  return wrap;
+}
+
+// =========================================================
+// 1. LANDING
+// =========================================================
+function showLanding() {
+  setState("landing");
+  const page = el("section", "landing");
+
+  el("div", "sticker", "v2!<br>now with<br>glue", page);
+
+  ransom("WHAT THE", page);
+  ransom("FONT?!", page);
+  el("p", "tagline", 'which font does your personality <span class="scream">scream?</span>', page);
+
+  const note = el("div", "intro sticky", "", page);
+  tape(note, "tc");
+  el("p", "", "8 questions. No font words. An AI type designer turns you into a custom typeface.", note);
+
+  doodle("write your name here ↓", page, "name-hint");
+
+  const row = el("div", "start-row", "", page);
+  const nameInput = createInput(userName);
+  nameInput.attribute("placeholder", "your name");
+  nameInput.attribute("maxlength", "20");
+  nameInput.addClass("name-input");
+  nameInput.parent(row);
+
+  const go = createButton("Start →");
+  go.addClass("btn red");
+  go.parent(row);
+  go.mousePressed(() => {
+    userName = nameInput.value().trim();
+    userAnswers = [];
+    current = 0;
+    specs = { ...DEFAULT_SPECS };
+    showQuestion();
   });
+
+  // API key box (stored in this browser only, never in the code)
+  const keyBox = el("details", "keybox", "", page);
+  el("summary", "", getKey() ? "API key saved ✓" : "Add OpenAI API key (optional, works offline without it)", keyBox);
+  const keyRow = el("div", "key-row", "", keyBox);
+  const keyInput = createInput("", "password");
+  keyInput.attribute("placeholder", "sk-...");
+  keyInput.attribute("autocomplete", "off");
+  keyInput.parent(keyRow);
+  const save = createButton("Save");
+  save.addClass("btn small");
+  save.parent(keyRow);
+  save.mousePressed(() => { saveKey(keyInput.value()); showLanding(); });
+  const clear = createButton("Clear");
+  clear.addClass("btn small light");
+  clear.parent(keyRow);
+  clear.mousePressed(() => { clearKey(); showLanding(); });
+  el("p", "fine", "Your key stays in this browser's storage. It is never sent anywhere except OpenAI.", keyBox);
 }
 
-function goNext() {
-  if (qIndex < QUESTIONS.length - 1) {
-    qIndex++;
-    render();
-  } else {
-    finishQuiz();
-  }
-}
+// =========================================================
+// 2. QUIZ (one question at a time)
+// =========================================================
+function showQuestion() {
+  setState("quiz");
+  const item = QUESTIONS[current];
+  const page = el("section", "quiz");
 
-function resetQuiz() {
-  qIndex = 0;
-  answers = [];
-  result = null;
-}
+  // ghost letter: morphs as your answers come in
+  const ghost = el("div", "ghost", "Aa", page);
+  applyFont(ghost, specs);
 
+  const top = el("div", "quiz-top", "", page);
+  el("span", "progress-label", `Q${current + 1} / ${QUESTIONS.length}`, top);
+  const bar = el("div", "bar", "", top);
+  const fill = el("div", "bar-fill", "", bar);
+  fill.style("width", `${(current / QUESTIONS.length) * 100}%`);
 
-// ---------- Scoring (deterministic, no AI) ----------
-function scoreAnswers() {
-  const totals = {};
-  FONT_ORDER.forEach(k => (totals[k] = 0));
+  const card = el("div", "question-card", "", page);
+  tape(card, "tl", current % 2 ? "pink" : "");
+  tape(card, "tr", current % 2 ? "" : "blue");
+  el("h2", "question", item.q, card);
 
-  QUESTIONS.forEach((q, i) => {
-    const a = answers[i];
-    if (!a) return;
-    let scores = {};
-    if (q.type === "choice") {
-      scores = q.options[a.value].scores;
-    } else if (q.type === "slider") {
-      const band = q.bands.find(b => a.value <= b.upTo) || q.bands[q.bands.length - 1];
-      scores = band.scores;
-    }
-    for (const k in scores) totals[k] += scores[k];
+  const opts = el("div", "options", "", page);
+  item.options.forEach((opt, i) => {
+    const b = createButton(opt.label);
+    b.addClass("option");
+    b.elt.style.setProperty("--tilt", `${TILTS[(i + current) % TILTS.length]}deg`);
+    if (userAnswers[current] === i) b.addClass("picked");
+    b.parent(opts);
+    // preview: hovering an option morphs the ghost letter
+    b.mouseOver(() => applyFont(ghost, { ...specs, [item.param]: opt.value }));
+    b.mouseOut(() => applyFont(ghost, specs));
+    b.mousePressed(() => pickAnswer(i));
   });
 
-  let fontKey = FONT_ORDER[0];
-  for (const k of FONT_ORDER) {
-    if (totals[k] > totals[fontKey]) fontKey = k;
+  if (current === 0) doodle("psst, hover an answer and watch the big letter →", page, "hover-hint");
+
+  if (current > 0) {
+    const back = createButton("← back");
+    back.addClass("btn small light back");
+    back.parent(page);
+    back.mousePressed(() => { current--; showQuestion(); });
   }
-  return { fontKey, totals };
 }
 
-function summariseAnswers() {
-  return QUESTIONS.map((q, i) => {
-    const a = answers[i];
-    if (q.type === "choice") return q.text + " : " + q.options[a.value].label;
-    return q.text + " : " + a.value + " out of " + q.max + " (" + q.minLabel + " to " + q.maxLabel + ")";
+function pickAnswer(i) {
+  userAnswers[current] = i;
+  specs = specsFromAnswers();
+  current++;
+  if (current < QUESTIONS.length) showQuestion();
+  else showLoading();
+}
+
+// THE KEY STEP: each answer sets one font parameter
+function specsFromAnswers() {
+  const s = { ...DEFAULT_SPECS };
+  QUESTIONS.forEach((item, i) => {
+    if (userAnswers[i] !== undefined) s[item.param] = item.options[userAnswers[i]].value;
   });
+  return s;
 }
 
+// =========================================================
+// 3. LOADING
+// =========================================================
+async function showLoading() {
+  setState("loading");
+  const page = el("section", "loading");
+  const card = el("div", "loading-card", "", page);
+  tape(card, "tc", "pink");
+  el("div", "loading-word", esc(userName) || "Aa", card);
+  el("p", "loading-text", "The Foundry is cutting and gluing you together...", card);
 
-// ---------- Finish: score, then ONE API call ----------
-async function finishQuiz() {
-  if (requestInFlight) return; // stops double requests
-  requestInFlight = true;
-
-  const { fontKey, totals } = scoreAnswers();
-  result = { fontKey, totals, reading: null };
-  state = "loading";
-  render();
-
-  result.reading = await fetchFontReading(fontKey, summariseAnswers());
-
-  requestInFlight = false;
-  state = "result";
-  render();
+  quizSpecs = { ...specs };
+  const wait = new Promise((r) => setTimeout(r, 2200)); // a little drama
+  const [result] = await Promise.all([askFoundry(userAnswers, specs), wait]);
+  foundry = result;
+  showResult();
 }
 
+// =========================================================
+// 4. RESULT + SLIDERS
+// =========================================================
+let fontEls = [];       // every element drawn in the user's font
+let saysEl, chipsEl;
+let sliderRows = {};
+let familyBtns = {};
 
-// ---------- Loading ----------
-function renderLoading() {
-  const c = makeCard("loading");
-  createElement("h2", "Setting your type").parent(c);
-  createDiv("<span>.</span><span>.</span><span>.</span>").parent(c).addClass("dots");
-}
+function showResult() {
+  setState("result");
+  fontEls = [];
+  const page = el("section", "result");
 
+  // --- the scream ---
+  const hero = el("div", "hero", "", page);
+  el("div", "you-are", "YOU ARE", hero);
+  const label = el("div", "name-label", "", hero);
+  const nameEl = el("h1", "font-name", esc(foundry.fontName), label);
+  fontEls.push(nameEl);
+  doodle("↑ that's you, apparently", hero, "hero-note");
 
-// ---------- Result ----------
-function renderResult() {
-  const font = FONTS[result.fontKey];
-  const r = result.reading;
-  const c = makeCard("result");
+  const grid = el("div", "result-grid", "", page);
 
-  createP("You are...").parent(c).addClass("small");
-  const title = createElement("h1", font.name).parent(c).addClass("specimen-title");
-  createP(font.label).parent(c).addClass("label");
+  // --- left: specimen ---
+  const spec = el("div", "specimen card", "", grid);
+  tape(spec, "tl");
+  tape(spec, "tr", "pink");
+  el("div", "label", "SPECIMEN", spec);
+  const big = el("div", "spec-name", esc(userName) || "Hello, you", spec);
+  const abc = el("div", "spec-abc", "Aa Bb Cc Dd Ee Ff Gg Hh 0123 ?!&", spec);
+  const pangram = el("div", "spec-pangram", "Sphinx of black quartz, judge my vow.", spec);
+  fontEls.push(big, abc, pangram);
 
-  const head = createElement("h2", escapeHTML(r.headline)).parent(c);
-  const desc = createP(escapeHTML(r.description)).parent(c).addClass("reading");
+  chipsEl = el("div", "chips", "", spec);
+  const info = [
+    ["Character", foundry.character],
+    ["Best used for", foundry.bestUsedFor],
+    ["Never use for", foundry.neverUseFor],
+    ["Pairs well with", foundry.pairsWellWith],
+  ];
+  info.forEach(([k, v]) => {
+    const row = el("div", "info-row", "", spec);
+    el("span", "info-k", k, row);
+    el("span", "info-v", esc(v), row);
+  });
+  saysEl = el("div", "says", `“${esc(foundry.fontSays)}”`, spec);
+  if (foundry.source === "offline") el("p", "fine", foundry.note, spec);
 
-  if (r.source === "fallback") {
-    createP(fallbackNote(r.reason)).parent(c).addClass("small note");
-  }
+  // --- right: tweak panel ---
+  const panel = el("div", "panel card", "", grid);
+  tape(panel, "tc", "blue");
+  el("div", "label", "TWEAK YOUR FONT", panel);
+  doodle("drag me! the font talks back", panel, "panel-note");
 
-  // Score breakdown (shows the result is rule-based and repeatable)
-  const scoreLine = FONT_ORDER.map(k => FONTS[k].name + " " + result.totals[k]).join("  ·  ");
-  createP("Scores: " + scoreLine).parent(c).addClass("small scores");
+  const famRow = el("div", "families", "", panel);
+  familyBtns = {};
+  Object.keys(FAMILIES).forEach((key) => {
+    const b = createButton(key);
+    b.addClass("fam");
+    b.parent(famRow);
+    b.mousePressed(() => {
+      specs.classification = key;
+      react("classification", 1);
+      updateResult();
+    });
+    familyBtns[key] = b;
+  });
 
-  // ----- Tweak your type -----
-  const tweak = createDiv().parent(c).addClass("tweak");
-  createElement("h3", "Tweak your type").parent(tweak);
-  if (r.tweakTip) createP(escapeHTML(r.tweakTip)).parent(tweak).addClass("small");
-
-  const specimen = createDiv("The quick brown fox jumps over the lazy dog").parent(tweak).addClass("specimen");
-  specimen.attribute("contenteditable", "true");
-
-  const styled = [title, head, desc, specimen];
-  styled.forEach(el => el.style("font-family", font.css));
-
-  const values = {};
-  font.axes.forEach(ax => {
-    values[ax.tag] = ax.default;
-    const row = createDiv().parent(tweak).addClass("axis");
-    createSpan(ax.name).parent(row);
-    const s = createSlider(ax.min, ax.max, ax.default, 1).parent(row);
-    const out = createSpan(String(ax.default)).parent(row).addClass("axis-value");
+  sliderRows = {};
+  SLIDERS.forEach((cfg) => {
+    const row = el("div", "slider-row", "", panel);
+    const head = el("div", "slider-head", "", row);
+    el("span", "slider-label", cfg.label, head);
+    const val = el("span", "slider-val", "", head);
+    const s = createSlider(cfg.min, cfg.max, specs[cfg.param], cfg.step);
+    s.parent(row);
+    const note = el("div", "slider-note", cfg.trait, row);
+    let prev = specs[cfg.param];
     s.input(() => {
-      values[ax.tag] = Number(s.value());
-      out.html(s.value());
-      applyAxes();
+      const v = Number(s.value());
+      react(cfg.param, v - prev);
+      prev = v;
+      specs[cfg.param] = v;
+      updateResult();
     });
+    sliderRows[cfg.param] = { row, s, val, note, cfg };
   });
 
-  function applyAxes() {
-    const settings = Object.entries(values).map(([t, v]) => `'${t}' ${v}`).join(", ");
-    styled.forEach(el => el.style("font-variation-settings", settings));
-  }
-  applyAxes();
+  el("p", "legend", "● real font axis &nbsp; ◐ simulated &nbsp; ○ not on this typeface", panel);
 
-  const row = createDiv().parent(c).addClass("row");
-  createButton("Retake quiz").parent(row).addClass("primary").mousePressed(() => {
-    resetQuiz();
-    state = "quiz";
-    render();
+  const actions = el("div", "actions", "", panel);
+  const reset = createButton("Reset to my answers");
+  reset.addClass("btn small light");
+  reset.parent(actions);
+  reset.mousePressed(() => { specs = { ...quizSpecs }; showResult(); });
+
+  const copy = createButton("Copy my font CSS");
+  copy.addClass("btn small");
+  copy.parent(actions);
+  copy.mousePressed(() => {
+    navigator.clipboard?.writeText(fontCSS(specs));
+    copy.html("Copied ✓");
   });
-  createButton("Home").parent(row).addClass("link").mousePressed(() => {
-    state = "intro";
-    render();
-  });
+
+  const again = createButton("Retake quiz");
+  again.addClass("btn small red");
+  again.parent(actions);
+  again.mousePressed(showLanding);
+
+  updateResult();
 }
 
-function fallbackNote(reason) {
-  const notes = {
-    "no-key": "Offline reading: no API key set. Add one from Home for an AI reading.",
-    "bad-key": "The API key was rejected, so this is a pre-written reading. Re-enter the key from Home.",
-    "limit": "The class API is busy or out of credit, so this is a pre-written reading.",
-    "timeout": "The AI took too long, so this is a pre-written reading.",
-    "bad-shape": "The AI reply came back garbled, so this is a pre-written reading."
-  };
-  return notes[reason] || "Couldn't reach the AI, so this is a pre-written reading.";
+// redraw every font element + slider labels from the current specs
+function updateResult() {
+  fontEls.forEach((e) => applyFont(e, specs));
+
+  Object.entries(familyBtns).forEach(([k, b]) => {
+    if (k === specs.classification) b.addClass("on"); else b.removeClass("on");
+  });
+
+  Object.values(sliderRows).forEach(({ row, s, val, cfg }) => {
+    const support = axisSupport(specs.classification, cfg.param);
+    const mark = { real: "●", simulated: "◐", none: "○" }[support];
+    val.html(`${mark} ${formatVal(cfg.param, specs[cfg.param])}`);
+    if (support === "none") {
+      s.attribute("disabled", "");
+      row.addClass("off");
+    } else {
+      s.removeAttribute("disabled");
+      row.removeClass("off");
+    }
+  });
+
+  chipsEl.html("");
+  [
+    FAMILIES[specs.classification].name,
+    `weight ${Math.round(specs.weight)}`,
+    `width ${Math.round(specs.width)}`,
+    `slant ${specs.slant}`,
+    `spacing ${specs.spacing.toFixed(2)}`,
+  ].forEach((t) => el("span", "chip", t, chipsEl));
 }
 
-// AI text is shown with innerHTML, so escape it first
-function escapeHTML(str) {
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+function formatVal(param, v) {
+  if (param === "casual") return v.toFixed(2);
+  if (param === "spacing") return v.toFixed(3) + "em";
+  return Math.round(v * 10) / 10;
+}
+
+// the font talks back when you change it
+function react(param, delta) {
+  if (delta === 0) return;
+  const line = REACTIONS[param][delta > 0 ? "up" : "down"];
+  saysEl.html(`“${line}”`);
+  saysEl.removeClass("pop");
+  void saysEl.elt.offsetWidth; // restart the animation
+  saysEl.addClass("pop");
 }
