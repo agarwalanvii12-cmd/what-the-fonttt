@@ -1,23 +1,30 @@
-What The Font? (v2)
+WHAT THE FONT?! v2 · scrapbook edition
 
-An AI-powered personality quiz built with p5.js and the OpenAI API. It tells you which typeface you are, then lets you tweak that font's variable axes.
+An AI-powered personality quiz that designs a custom variable font for you. Built with p5.js for ID2116 Computing for Design (Project 02).
 
+v2 keeps every v1 feature and adds a whacky scrapbook look: graph paper, washi tape, sticky notes, handwritten margin doodles and letters that rain down while the AI thinks.
+
+How it works
+8 questions, no font words. Each answer sets one font parameter (classification, width, weight, casual, slant, roundness, contrast, spacing).
+The code builds the font. Same answers always give the same font specs.
+The Foundry (AI) gets the answers + specs through the OpenAI API and launches the font: name, character, best/never used for, pairings, and a line the font says.
+No key or API error? The offline Foundry writes a rule-based result, so the quiz never breaks.
+Tweak your font with 7 sliders and 5 families. The font talks back as you drag.
 Files
 File	What it does
-index.html	Loads fonts, p5.js and the scripts
-quizData.js	Fonts, questions and scoring. Edit this to change the quiz.
-api.js	The OpenAI call, the system prompt and error handling
-sketch.js	Screens, scoring logic and the floating-letter background
-style.css	Look and feel
-How it works
-The user answers 5 questions (buttons + one slider).
-Scoring code adds up points and picks the typeface. Same answers always give the same font.
-One API call sends the chosen font and the answers to the LLM, which writes a personalised reading as JSON.
-If the API fails (no key, bad key, out of credit, timeout), a pre-written reading is shown instead.
+index.html	Loads the variable fonts, p5.js and the scripts
+quiz-data.js	Questions, default specs, sliders, slider reactions
+fonts.js	Turns specs into real CSS variable-font settings
+foundry.js	The AI prompt, the API call and the offline fallback
+sketch.js	Screens (landing, quiz, loading, result) and the p5 background
+style.css	Scrapbook styling
+Fonts
+Type	Font	Real axes
+serif	Fraunces	weight, roundness, contrast, casual
+sans	Roboto Flex	weight, width, slant, contrast
+slab	Roboto Slab	weight
+script	Dancing Script	weight
+mono	Recursive	weight, slant, casual
 API key
 
-The key is not in this repo. When the app opens, it asks for the key and saves it in that browser only (localStorage). To remove it, use "Change API key" then "Remove saved key" on the home screen.
-
-Running it
-
-Push to GitHub, then turn on GitHub Pages (Settings > Pages > Deploy from branch > main / root).
+The key is never in the code. Open the "Add OpenAI API key" box on the landing page and paste it there. It stays in that browser only.
